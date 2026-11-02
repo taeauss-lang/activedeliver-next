@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ad-next-v2';
+const CACHE_NAME = 'activedeliver-en-v1';
 const ASSETS = [
   './',
   './index.html',
@@ -25,6 +25,6 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   e.respondWith(
-    caches.match(e.request).then((res) => res || fetch(e.request))
+    caches.match(e.request).then((res) => res || fetch(e.request).catch(() => caches.match('./index.html')))
   );
 });

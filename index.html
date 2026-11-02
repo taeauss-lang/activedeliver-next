@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="th">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -29,125 +29,149 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    const API_BASE = 'https://api.campaigntrack.com/CtMobileDeviceREST/request.ashx?';
-    const CORS_PROXIES = [
-      (url) => url,
-      (url) => 'https://corsproxy.io/?' + encodeURIComponent(url),
-      (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url)
+    // CampaignTrack Legacy Endpoint (HTTP port 80)
+    const TARGET_API = 'http://api.campaigntrack.com/CtMobileDeviceREST/request.ashx?';
+    
+    // Multi-proxy fallback strategy for browser CORS bypass
+    const PROXY_HANDLERS = [
+      (params) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(TARGET_API + params),
+      (params) => 'https://corsproxy.io/?' + encodeURIComponent(TARGET_API + params),
+      (params) => 'https://thingproxy.freeboard.io/fetch/' + TARGET_API + params,
+      (params) => TARGET_API + params
     ];
 
-    async function apiRequest(params) {
-      const fullUrl = API_BASE + params;
-      for (const getUrl of CORS_PROXIES) {
+    async function callCampaignTrackAPI(params) {
+      for (const getUrl of PROXY_HANDLERS) {
         try {
-          const res = await fetch(getUrl(fullUrl), { method: 'GET', headers: { 'Accept': 'application/json' } });
-          if (res.ok) {
-            const data = await res.json();
-            return data;
+          const targetUrl = getUrl(params);
+          const response = await fetch(targetUrl, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+          });
+          if (response.ok) {
+            const text = await response.text();
+            try {
+              const data = JSON.parse(text);
+              return data;
+            } catch (jsonErr) {
+              // Handle possible wrapped JSON or text
+              const cleaned = text.trim();
+              if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
+                return JSON.parse(cleaned);
+              }
+            }
           }
-        } catch (e) {
-          console.warn('Proxy retry...', e);
+        } catch (err) {
+          console.warn('Proxy attempt failed, trying fallback...', err);
         }
       }
-      throw new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ CampaignTrack ได้');
+      throw new Error('Unable to establish connection to CampaignTrack API server.');
     }
 
-    const DEMO_JOBS = [
-      { id: '30231453-2', client: 'Harris Tripp', address: '356 New Canterbury Road, Dulwich Hill', boxes: 1, type: 'Envelope', isDispatched: true, status: 'picked_up' },
-      { id: '30208566-2', client: 'McGrath Real Estate', address: '124 Crown Street, Surry Hills', boxes: 3, type: 'Box', isDispatched: false, status: 'pending' },
-      { id: '30232628-1', client: 'RH Morton Pyrmont', address: 'Suite 2, 12 Wharf Crescent, Pyrmont', boxes: 1, type: 'Envelope', isDispatched: true, status: 'picked_up' },
-      { id: '30234112-1', client: 'Stone Real Estate Commercial', address: '480 Pacific Highway, Crows Nest', boxes: 2, type: 'Box', isDispatched: false, status: 'pending' },
-      { id: '30235590-3', client: 'Belle Property Mosman', address: '102 Military Road, Neutral Bay', boxes: 1, type: 'Box', isDispatched: false, status: 'pending' }
+    const DEFAULT_SYDNEY_JOBS = [
+      { id: '30231453-2', client: 'Harris Tripp', address: '356 New Canterbury Road, Dulwich Hill NSW', boxes: 1, type: 'Envelope', isDispatched: true, status: 'picked_up' },
+      { id: '30208566-2', client: 'McGrath Real Estate', address: '124 Crown Street, Surry Hills NSW', boxes: 3, type: 'Box', isDispatched: false, status: 'pending' },
+      { id: '30232628-1', client: 'RH Morton Pyrmont', address: 'Suite 2, 12 Wharf Crescent, Pyrmont NSW', boxes: 1, type: 'Envelope', isDispatched: true, status: 'picked_up' },
+      { id: '30234112-1', client: 'Stone Real Estate Commercial', address: '480 Pacific Highway, Crows Nest NSW', boxes: 2, type: 'Box', isDispatched: false, status: 'pending' },
+      { id: '30235590-3', client: 'Belle Property Mosman', address: '102 Military Road, Neutral Bay NSW', boxes: 1, type: 'Box', isDispatched: false, status: 'pending' },
+      { id: '30236780-1', client: 'Ray White Double Bay', address: '356 New South Head Road, Double Bay NSW', boxes: 4, type: 'Box', isDispatched: false, status: 'pending' },
+      { id: '30237190-2', client: 'LJ Hooker Bondi Beach', address: '64 Hall Street, Bondi Beach NSW', boxes: 1, type: 'Envelope', isDispatched: true, status: 'picked_up' },
+      { id: '30238450-1', client: 'BresicWhitney Darlinghurst', address: '154 Victoria Street, Darlinghurst NSW', boxes: 2, type: 'Box', isDispatched: false, status: 'pending' }
     ];
 
     function App() {
       const [auth, setAuth] = useState(() => {
-        const saved = localStorage.getItem('ad_auth');
+        const saved = localStorage.getItem('ad_auth_en');
         return saved ? JSON.parse(saved) : null;
       });
       const [username, setUsername] = useState('');
       const [password, setPassword] = useState('');
       const [loading, setLoading] = useState(false);
       const [jobs, setJobs] = useState(() => {
-        const saved = localStorage.getItem('ad_jobs');
-        return saved ? JSON.parse(saved) : DEMO_JOBS;
+        const saved = localStorage.getItem('ad_jobs_en');
+        return saved ? JSON.parse(saved) : DEFAULT_SYDNEY_JOBS;
       });
-      const [tab, setTab] = useState('list');
+      const [tab, setTab] = useState('list'); // 'list' | 'history' | 'route'
       const [pickupDialog, setPickupDialog] = useState(null);
       const [deliveryDialog, setDeliveryDialog] = useState(null);
       const [searchCode, setSearchCode] = useState('');
       const [photoPreview, setPhotoPreview] = useState(null);
-      const [dropPreset, setDropPreset] = useState('Front Door (หน้าประตู)');
+      const [dropPreset, setDropPreset] = useState('Front Door');
       const [dropNote, setDropNote] = useState('');
       const [history, setHistory] = useState(() => {
-        const saved = localStorage.getItem('ad_history');
+        const saved = localStorage.getItem('ad_history_en');
         return saved ? JSON.parse(saved) : [];
       });
 
       const fileInputRef = useRef(null);
 
       useEffect(() => {
-        localStorage.setItem('ad_jobs', JSON.stringify(jobs));
+        localStorage.setItem('ad_jobs_en', JSON.stringify(jobs));
       }, [jobs]);
 
       useEffect(() => {
-        localStorage.setItem('ad_history', JSON.stringify(history));
+        localStorage.setItem('ad_history_en', JSON.stringify(history));
       }, [history]);
 
+      // Login Handler
       const handleLogin = async (e) => {
         e.preventDefault();
         if (!username || !password) return;
         setLoading(true);
         try {
-          const res = await apiRequest('id=1&username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password));
+          const res = await callCampaignTrackAPI('id=1&username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password));
           if (res && res.results && res.results.length > 0) {
             const user = res.results[0];
-            const authData = { key: user.key, name: user.name || username };
-            setAuth(authData);
-            localStorage.setItem('ad_auth', JSON.stringify(authData));
-            fetchJobs(user.key);
+            const session = { key: user.key, name: user.name || username };
+            setAuth(session);
+            localStorage.setItem('ad_auth_en', JSON.stringify(session));
+            syncJobs(user.key);
           } else {
-            alert('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+            alert('Login failed: Invalid courier username or password.');
           }
         } catch (err) {
-          alert('เชื่อมต่อไม่สำเร็จ: ' + err.message);
+          alert('Network notice: Direct server connection was blocked. You can still use Demo/Offline Mode or retry with active network.');
         } finally {
           setLoading(false);
         }
       };
 
-      const fetchJobs = async (key = auth?.key) => {
-        if (!key) return;
+      // Sync Real Shift Jobs
+      const syncJobs = async (key = auth?.key) => {
+        if (!key || key === 'demo') return;
         setLoading(true);
         try {
-          const res = await apiRequest('id=64&isTest=0&key=' + encodeURIComponent(key));
-          if (res && res.results) {
+          const res = await callCampaignTrackAPI('id=64&isTest=0&key=' + encodeURIComponent(key));
+          if (res && res.results && res.results.length > 0) {
             const formatted = res.results.map(r => ({
               id: r.jobno || r.itemtaskno,
               client: r.officename || r.agentname || 'Client',
               address: [r.address1, r.address2, r.suburb].filter(Boolean).join(', ') || r.propertyaddress,
               boxes: parseInt(r.packingtype) || 1,
-              type: (r.packingtype && r.packingtype.includes('Box')) ? 'Box' : 'Envelope',
+              type: (r.packingtype && r.packingtype.toLowerCase().includes('box')) ? 'Box' : 'Envelope',
               isDispatched: r.isdispatched === 'True' || r.isdispatched === true || r.isdispatched === '1',
               status: (r.isdispatched === 'True' || r.isdispatched === true || r.isdispatched === '1') ? 'picked_up' : 'pending',
               phone: r.phone
             }));
             setJobs(formatted);
-            alert('โหลดงานจริงสำเร็จเรียบร้อย! ทั้งหมด ' + formatted.length + ' งาน');
+            alert('Sync complete! Loaded ' + formatted.length + ' active delivery jobs.');
+          } else {
+            alert('No active jobs assigned for today yet.');
           }
         } catch (err) {
-          alert('ไม่สามารถโหลดงานได้: ' + err.message);
+          alert('Sync error: ' + err.message);
         } finally {
           setLoading(false);
         }
       };
 
+      // 0.1s Instant Local Barcode Search
       const handleScan = (code) => {
         const clean = code.trim();
         if (!clean) return;
         const job = jobs.find(j => j.id.toLowerCase() === clean.toLowerCase() || clean.includes(j.id));
         if (!job) {
-          alert('ไม่พบบาร์โค้ด: ' + clean);
+          alert('Barcode not found: ' + clean + '\nPlease verify package job number.');
           return;
         }
         if (!job.isDispatched) {
@@ -158,34 +182,37 @@
         setSearchCode('');
       };
 
+      // Confirm Pickup
       const confirmPickup = async (job) => {
         setJobs(jobs.map(j => j.id === job.id ? { ...j, isDispatched: true, status: 'picked_up' } : j));
         setPickupDialog(null);
-        if (auth?.key) {
-          apiRequest('id=61&key=' + encodeURIComponent(auth.key) + '&jobno=' + encodeURIComponent(job.id)).catch(console.warn);
+        if (auth?.key && auth.key !== 'demo') {
+          callCampaignTrackAPI('id=61&key=' + encodeURIComponent(auth.key) + '&jobno=' + encodeURIComponent(job.id)).catch(console.warn);
         }
       };
 
+      // Confirm Delivery & Photo POD
       const confirmDelivery = async (job) => {
-        const deliveredItem = {
+        const item = {
           ...job,
           status: 'delivered',
           photo: photoPreview,
           dropPreset,
           dropNote,
-          deliveredAt: new Date().toLocaleTimeString('th-TH')
+          deliveredAt: new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })
         };
-        setJobs(jobs.map(j => j.id === job.id ? deliveredItem : j));
-        setHistory([deliveredItem, ...history]);
+        setJobs(jobs.map(j => j.id === job.id ? item : j));
+        setHistory([item, ...history]);
         setDeliveryDialog(null);
         setPhotoPreview(null);
         setDropNote('');
 
-        if (auth?.key) {
-          apiRequest('id=60&key=' + encodeURIComponent(auth.key) + '&jobno=' + encodeURIComponent(job.id)).catch(console.warn);
+        if (auth?.key && auth.key !== 'demo') {
+          callCampaignTrackAPI('id=60&key=' + encodeURIComponent(auth.key) + '&jobno=' + encodeURIComponent(job.id)).catch(console.warn);
         }
       };
 
+      // Camera Photo Capture & Geotag Watermark
       const handlePhotoCapture = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -199,12 +226,13 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0);
 
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-            ctx.fillRect(0, canvas.height - 120, canvas.width, 120);
+            // Watermark GPS & Timestamp overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.70)';
+            ctx.fillRect(0, canvas.height - 130, canvas.width, 130);
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 28px monospace';
-            ctx.fillText('📍 GPS: Sydney NSW • ' + new Date().toLocaleString('th-TH'), 30, canvas.height - 70);
-            ctx.font = '22px sans-serif';
+            ctx.font = 'bold 30px monospace';
+            ctx.fillText('📍 GPS: Sydney NSW • ' + new Date().toLocaleString('en-AU'), 30, canvas.height - 75);
+            ctx.font = '24px sans-serif';
             ctx.fillText('🏢 ' + (deliveryDialog?.address || ''), 30, canvas.height - 30);
 
             setPhotoPreview(canvas.toDataURL('image/jpeg', 0.85));
@@ -214,6 +242,7 @@
         reader.readAsDataURL(file);
       };
 
+      // Login Screen
       if (!auth) {
         return (
           <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-900 text-white p-6 justify-center">
@@ -221,29 +250,29 @@
               <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto text-3xl shadow-lg">
                 <i className="fa-solid fa-truck-fast"></i>
               </div>
-              <h1 className="text-2xl font-bold">ActiveDeliver Next</h1>
-              <p className="text-xs text-slate-400">ระบบจัดส่งด่วน CampaignTrack Sydney</p>
+              <h1 className="text-2xl font-bold tracking-tight">ActiveDeliver Next</h1>
+              <p className="text-xs text-slate-400">Sydney Courier Logistics • CampaignTrack</p>
             </div>
 
             <form onSubmit={handleLogin} className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4 shadow-xl">
               <div>
-                <label className="text-xs text-slate-300 font-bold block mb-1.5">ชื่อผู้ใช้ (Username):</label>
+                <label className="text-xs text-slate-300 font-bold block mb-1.5">Courier Username</label>
                 <input 
                   type="text" 
                   value={username}
                   onChange={e => setUsername(e.target.value)}
-                  placeholder="ใส่ Username คนขับ..."
+                  placeholder="Enter courier username..."
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-blue-500"
                   required
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-300 font-bold block mb-1.5">รหัสผ่าน (Password):</label>
+                <label className="text-xs text-slate-300 font-bold block mb-1.5">Password</label>
                 <input 
                   type="password" 
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="ใส่รหัสผ่าน..."
+                  placeholder="Enter password..."
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-blue-500"
                   required
                 />
@@ -254,15 +283,19 @@
                 className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl text-sm shadow-lg flex items-center justify-center gap-2"
               >
                 {loading ? <i className="fa-solid fa-spinner animate-spin"></i> : <i className="fa-solid fa-right-to-bracket"></i>}
-                <span>เข้าสู่ระบบ & ดึงงานจริง</span>
+                <span>Sign In & Sync Jobs</span>
               </button>
             </form>
 
             <button 
-              onClick={() => setAuth({ key: 'demo', name: 'Demo Courier (Tae)' })}
-              className="mt-6 text-center text-xs text-slate-400 hover:text-white underline"
+              onClick={() => {
+                const demoUser = { key: 'demo', name: 'Tae (Sydney Courier)' };
+                setAuth(demoUser);
+                localStorage.setItem('ad_auth_en', JSON.stringify(demoUser));
+              }}
+              className="mt-6 text-center text-xs text-blue-400 hover:text-blue-300 underline font-medium"
             >
-              ทดลองใช้งานโหมดออฟไลน์ (Demo Mode)
+              Continue in Demo & Offline Mode →
             </button>
           </div>
         );
@@ -280,42 +313,43 @@
               <span className="bg-blue-600 text-white p-2 rounded-lg text-base"><i className="fa-solid fa-truck-fast"></i></span>
               <div>
                 <h1 className="font-bold text-white text-sm leading-tight">{auth.name}</h1>
-                <p className="text-[11px] text-slate-400">CampaignTrack • {jobs.length} งาน</p>
+                <p className="text-[11px] text-slate-400">Sydney Run • {jobs.length} Jobs</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => fetchJobs()} className="text-xs bg-slate-700 hover:bg-slate-600 text-blue-400 p-2 rounded-lg">
-                <i className="fa-solid fa-rotate mr-1"></i> ซิงค์งาน
+              <button onClick={() => syncJobs()} className="text-xs bg-slate-700 hover:bg-slate-600 text-blue-400 px-2.5 py-1.5 rounded-lg flex items-center gap-1">
+                <i className="fa-solid fa-rotate"></i>
+                <span>Sync</span>
               </button>
-              <button onClick={() => { localStorage.removeItem('ad_auth'); setAuth(null); }} className="text-slate-400 hover:text-rose-400 text-sm p-1">
-                <i className="fa-solid fa-arrow-right-from-bracket"></i>
+              <button onClick={() => { localStorage.removeItem('ad_auth_en'); setAuth(null); }} className="text-slate-400 hover:text-rose-400 p-1.5">
+                <i className="fa-solid fa-power-off"></i>
               </button>
             </div>
           </header>
 
-          {/* Quick Summary Chips */}
+          {/* Metric Badges */}
           <div className="grid grid-cols-3 gap-2 px-4 py-2 bg-slate-800/50 border-b border-slate-800 text-center text-xs">
             <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-2 text-orange-400">
               <div className="text-base font-bold">{pending}</div>
-              <div>รอรับของ</div>
+              <div>To Pickup</div>
             </div>
             <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-2 text-blue-400">
               <div className="text-base font-bold">{picked}</div>
-              <div>อยู่บนรถ</div>
+              <div>On Van</div>
             </div>
             <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2 text-emerald-400">
               <div className="text-base font-bold">{delivered}</div>
-              <div>ส่งสำเร็จ</div>
+              <div>Delivered</div>
             </div>
           </div>
 
           {/* Navigation Tabs */}
           <div className="flex bg-slate-800/80 border-b border-slate-700">
             <button onClick={() => setTab('list')} className={"flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 " + (tab === 'list' ? 'text-blue-400 border-b-2 border-blue-500 bg-slate-800' : 'text-slate-400')}>
-              <i className="fa-solid fa-list-check"></i> รายการงาน
+              <i className="fa-solid fa-list-check"></i> Job List
             </button>
             <button onClick={() => setTab('history')} className={"flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 " + (tab === 'history' ? 'text-blue-400 border-b-2 border-blue-500 bg-slate-800' : 'text-slate-400')}>
-              <i className="fa-solid fa-clock-rotate-left"></i> ประวัติงาน (สตอรี่)
+              <i className="fa-solid fa-clock-rotate-left"></i> History & POD
             </button>
           </div>
 
@@ -341,7 +375,7 @@
                         job.status === 'delivered' ? 'bg-emerald-500/20 text-emerald-400' :
                         !job.isDispatched ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'
                       )}>
-                        {job.status === 'delivered' ? 'ส่งแล้ว' : !job.isDispatched ? 'รอรับของ' : 'รับแล้ว'}
+                        {job.status === 'delivered' ? 'Delivered' : !job.isDispatched ? 'Pending Pickup' : 'On Van'}
                       </span>
                     </div>
                     <div className="text-xs text-slate-300 mb-2 flex items-start gap-1.5">
@@ -359,21 +393,21 @@
 
             {tab === 'history' && (
               <div className="space-y-3">
-                <div className="text-xs font-bold text-slate-400 mb-2">สตอรี่การส่งของวันนี้ ({history.length} รายการ)</div>
+                <div className="text-xs font-bold text-slate-400 mb-2">Today's Completed Deliveries ({history.length})</div>
                 {history.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500 text-xs">ยังไม่มีรายการส่งของที่บันทึก</div>
+                  <div className="text-center py-12 text-slate-500 text-xs">No delivery history recorded yet today.</div>
                 ) : (
                   history.map((h, i) => (
-                    <div key={i} className="bg-slate-800 border border-slate-700 p-3 rounded-xl space-y-2">
+                    <div key={i} className="bg-slate-800 border border-slate-700 p-3.5 rounded-xl space-y-2">
                       <div className="flex justify-between items-start">
                         <div className="font-bold text-sm text-white">{h.client}</div>
                         <span className="text-[10px] text-emerald-400 font-mono">🕒 {h.deliveredAt}</span>
                       </div>
                       <div className="text-xs text-slate-300">{h.address}</div>
-                      <div className="text-xs text-slate-400">จุดวางของ: <span className="text-blue-400">{h.dropPreset}</span> {h.dropNote ? '(' + h.dropNote + ')' : ''}</div>
+                      <div className="text-xs text-slate-400">Location: <span className="text-blue-400">{h.dropPreset}</span> {h.dropNote ? '(' + h.dropNote + ')' : ''}</div>
                       {h.photo && (
                         <div className="mt-2 rounded-lg overflow-hidden border border-slate-700">
-                          <img src={h.photo} alt="Proof of delivery" className="w-full h-36 object-cover" />
+                          <img src={h.photo} alt="Proof of delivery" className="w-full h-40 object-cover" />
                         </div>
                       )}
                     </div>
@@ -383,7 +417,7 @@
             )}
           </div>
 
-          {/* Floating Scan Bar */}
+          {/* Quick Barcode Scan Input Bar */}
           <div className="absolute bottom-4 left-4 right-4 z-20">
             <div className="bg-slate-800 p-2 rounded-2xl border border-slate-700 shadow-2xl flex gap-2">
               <input 
@@ -391,19 +425,20 @@
                 value={searchCode}
                 onChange={(e) => setSearchCode(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleScan(searchCode); }}
-                placeholder="ยิงบาร์โค้ดหรือพิมพ์เลขงาน..."
+                placeholder="Scan barcode or enter job no..."
                 className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
               />
               <button 
                 onClick={() => handleScan(searchCode)}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg"
+                className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg flex items-center gap-1.5"
               >
-                <i className="fa-solid fa-barcode mr-1"></i> สแกน
+                <i className="fa-solid fa-barcode"></i>
+                <span>Scan</span>
               </button>
             </div>
           </div>
 
-          {/* Confirm Pickup Dialog */}
+          {/* Confirm Pickup Modal */}
           {pickupDialog && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-sm p-5 space-y-4 text-center">
@@ -412,41 +447,43 @@
                 </div>
                 <div>
                   <h3 className="font-bold text-white text-lg">Confirm Pickup Job</h3>
-                  <p className="text-xs text-slate-400 mt-1">This job comprises of: <strong className="text-orange-400">{pickupDialog.boxes} {pickupDialog.type}</strong></p>
+                  <p className="text-xs text-slate-300 mt-1">This job comprises of: <strong className="text-orange-400">{pickupDialog.boxes} {pickupDialog.type}</strong></p>
                   <p className="text-xs font-mono text-slate-500 mt-1">{pickupDialog.id}</p>
                 </div>
                 <div className="bg-slate-900 p-3 rounded-lg text-left text-xs space-y-1 text-slate-300">
-                  <div><strong>ลูกค้า:</strong> {pickupDialog.client}</div>
-                  <div><strong>ที่อยู่:</strong> {pickupDialog.address}</div>
+                  <div><strong>Client:</strong> {pickupDialog.client}</div>
+                  <div><strong>Address:</strong> {pickupDialog.address}</div>
                 </div>
                 <div className="flex gap-3">
                   <button onClick={() => setPickupDialog(null)} className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-xs font-bold">
                     Cancel
                   </button>
                   <button onClick={() => confirmPickup(pickupDialog)} className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg">
-                    Confirm
+                    Confirm Pickup
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Delivery & Photo Screen */}
+          {/* Delivery & Photo POD Screen */}
           {deliveryDialog && (
             <div className="fixed inset-0 bg-slate-900 z-50 flex flex-col p-4 overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="font-bold text-white text-base"><i className="fa-solid fa-circle-check text-blue-500 mr-1.5"></i> บันทึกการส่งของ (Delivery)</h2>
+                <h2 className="font-bold text-white text-base"><i className="fa-solid fa-circle-check text-blue-500 mr-1.5"></i> Proof of Delivery (POD)</h2>
                 <button onClick={() => setDeliveryDialog(null)} className="text-slate-400 hover:text-white"><i className="fa-solid fa-xmark text-xl"></i></button>
               </div>
               <div className="bg-slate-800 p-4 rounded-xl space-y-2 mb-4 border border-slate-700 text-xs">
                 <div className="font-bold text-sm text-white">{deliveryDialog.client}</div>
                 <div className="text-slate-300"><i className="fa-solid fa-location-dot mr-1"></i> {deliveryDialog.address}</div>
-                <div className="text-slate-400 font-mono">เลขที่งาน: {deliveryDialog.id} ({deliveryDialog.boxes} {deliveryDialog.type})</div>
+                <div className="text-slate-400 font-mono">Job #: {deliveryDialog.id} ({deliveryDialog.boxes} {deliveryDialog.type})</div>
               </div>
+
+              {/* Photo Area */}
               <div className="space-y-2 mb-4">
                 <label className="text-xs font-bold text-white flex justify-between">
-                  <span>ถ่ายรูปจุดวางของ (Proof of Delivery Photo)</span>
-                  <span className="text-emerald-400 text-[10px]"><i className="fa-solid fa-shield mr-1"></i> ฝังพิกัด GPS อัตโนมัติ</span>
+                  <span>Placement Photo (Safe Drop Proof)</span>
+                  <span className="text-emerald-400 text-[10px]"><i className="fa-solid fa-shield mr-1"></i> Auto GPS & Timestamp</span>
                 </label>
                 
                 <input 
@@ -469,15 +506,17 @@
                   ) : (
                     <div className="text-center space-y-2 text-slate-400">
                       <i className="fa-solid fa-camera text-3xl text-blue-400"></i>
-                      <div className="text-xs font-medium">แตะเพื่อเปิดกล้องถ่ายรูปจุดวางของ</div>
+                      <div className="text-xs font-medium">Tap to snap placement photo</div>
                     </div>
                   )}
                 </div>
               </div>
+
+              {/* Drop-off Location Presets */}
               <div className="space-y-2 mb-4">
-                <label className="text-xs font-bold text-white">ระบุจุดที่วางพัสดุ:</label>
+                <label className="text-xs font-bold text-white">Placement Location Preset</label>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  {['Front Door (หน้าประตู)', 'Reception (เคาน์เตอร์)', 'Safe Place (จุดปลอดภัย)', 'Mailbox (ตู้จดหมาย)'].map((p) => (
+                  {['Front Door', 'Reception', 'Safe Place', 'Mailbox'].map((p) => (
                     <button 
                       key={p} 
                       onClick={() => setDropPreset(p)}
@@ -488,21 +527,24 @@
                   ))}
                 </div>
               </div>
+
+              {/* Drop-off Notes */}
               <div className="space-y-2 mb-6">
-                <label className="text-xs font-bold text-white">บันทึกโน้ตเพิ่มเติม:</label>
+                <label className="text-xs font-bold text-white">Delivery Notes (Optional)</label>
                 <input 
                   type="text" 
                   value={dropNote}
                   onChange={(e) => setDropNote(e.target.value)}
-                  placeholder="เช่น วางไว้หลังเสาข้างประตู..."
+                  placeholder="e.g. Left behind pillar beside main entrance..."
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
+
               <button 
                 onClick={() => confirmDelivery(deliveryDialog)}
                 className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-xl flex items-center justify-center gap-2 mt-auto"
               >
-                <i className="fa-solid fa-paper-plane"></i> บันทึกและยืนยันส่งพัสดุ
+                <i className="fa-solid fa-paper-plane"></i> Submit Delivery
               </button>
             </div>
           )}

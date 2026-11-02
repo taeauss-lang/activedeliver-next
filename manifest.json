@@ -1,7 +1,7 @@
 {
   "name": "ActiveDeliver Next",
   "short_name": "ActiveDeliver",
-  "description": "Fast Delivery & Scan Management for Couriers",
+  "description": "Smart Courier Delivery & Scan Solution for Sydney Couriers",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
